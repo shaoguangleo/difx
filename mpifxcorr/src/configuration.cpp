@@ -406,6 +406,7 @@ Configuration::~Configuration()
       delete [] configs[i].frequsedbysomebaseline;
       delete [] configs[i].equivfrequsedbysomebaseline;
       delete [] configs[i].freqoutputbysomebaseline;
+      delete [] configs[i].equivfreqoutputbysomebaseline;
       for(int j=0;j<freqtablelength;j++) {
         delete [] configs[i].frequsedbybaseline[j];
         delete [] configs[i].equivfrequsedbybaseline[j];
@@ -1015,7 +1016,7 @@ Configuration::sectionheader Configuration::getSectionHeader(istream * input)
 
 bool Configuration::processBaselineTable(istream * input)
 {
-  int tempint, dsband, findex, matchfindex;
+  int tempint, dsband;
   int ** tempintptr;
   string line;
   datastreamdata dsdata;
@@ -1112,41 +1113,33 @@ bool Configuration::processBaselineTable(istream * input)
     for(int i=0;i<baselinetablelength;i++)
     {
       const baselinedata& bldata = baselinetable[i];
-      for(int j=0;j<baselinetable[i].numfreqs;j++)
+      for(int j=0;j<bldata.numfreqs;j++)
       {
-        if(bldata.freqtableindices[j] == f) //its a match - check the other datastream for USB
+        int f1index, f2index, foutindex;
+        foutindex = baselinetable[i].targetfreqtableindices[j];
+        dsdata = datastreamtable[bldata.datastream1index];
+        dsband = bldata.datastream1bandindex[j][0];
+        if(dsband >= dsdata.numrecordedbands) //it is a zoom band
+          f1index = dsdata.zoomfreqtableindices[dsdata.zoombandlocalfreqindices[dsband-dsdata.numrecordedbands]];
+        else
+          f1index = dsdata.recordedfreqtableindices[dsdata.recordedbandlocalfreqindices[dsband]];
+        dsdata = datastreamtable[bldata.datastream2index];
+        dsband = bldata.datastream2bandindex[j][0];
+        if(dsband >= dsdata.numrecordedbands) //it is a zoom band
+          f2index = dsdata.zoomfreqtableindices[dsdata.zoombandlocalfreqindices[dsband-dsdata.numrecordedbands]];
+        else
+          f2index = dsdata.recordedfreqtableindices[dsdata.recordedbandlocalfreqindices[dsband]];
+        if(f1index == f || f2index == f) //its a match - check whether one of datastreams is USB
         {
-          dsdata = datastreamtable[bldata.datastream2index];
-          dsband = bldata.datastream2bandindex[j][0];
-          if(dsband >= dsdata.numrecordedbands) //it is a zoom band
-            findex = dsdata.zoomfreqtableindices[dsdata.zoombandlocalfreqindices[dsband-dsdata.numrecordedbands]];
-          else
-            findex = dsdata.recordedfreqtableindices[dsdata.recordedbandlocalfreqindices[dsband]];
-          if(!freqtable[findex].lowersideband)
+          if(freqtable[f1index].lowersideband != freqtable[f2index].lowersideband)
           {
-            //ahah! A cross LSB/USB.  Will need to change so the freqindex used is the USB
-            freqtable[f].correlatedagainstupper = true;
-          }
-        }
-      }
-    }
-    if(freqtable[f].correlatedagainstupper) //need to alter all freqindices to be the equivalent USB
-    {
-      matchfindex = 0;
-      //first find the matching USB freq
-      for(int i=0;i<freqtablelength;i++)
-      {
-        if(!freqtable[i].lowersideband && fabs(freqtable[f].bandwidth - freqtable[i].bandwidth) < Mode::TINY && fabs(freqtable[f].bandedgefreq - freqtable[f].bandwidth - freqtable[i].bandedgefreq) < Mode::TINY) //match
-          matchfindex = i;
-      }
-      for(int i=0;i<baselinetablelength;i++)
-      {
-        const baselinedata& bldata = baselinetable[i];
-        for(int j=0;j<baselinetable[i].numfreqs;j++)
-        {
-          if(bldata.freqtableindices[j] == f) //this baseline had referred to the LSB - replace with the USB freqindex
-          {
-            bldata.freqtableindices[j] = matchfindex;
+            //ahah! A cross LSB/USB. For consistency with DiFX-2.5/2.6 verify destination of LSB/USB is USB; LSB/LSB stays LSB
+            if(freqtable[f1index].lowersideband)
+              freqtable[f1index].correlatedagainstupper = true;
+            else
+              freqtable[f2index].correlatedagainstupper = true;
+            if(freqtable[foutindex].lowersideband)
+              cerror << startl << "Baseline " << i << " product " << j << " of DS " << bldata.datastream1index << " x " << bldata.datastream2index << " is mixed USB/LSB but .input assigns LSB freqId " << foutindex << " instead of an USB freqId" << endl;
           }
         }
       }
@@ -1987,29 +1980,6 @@ bool Configuration::processFreqTable(istream * input)
     {
       getinputline(input, &line, "PHASE CAL ");
     }
-    freqtable[i].matchingwiderbandindex = -1;
-    freqtable[i].matchingwiderbandoffset = -1;
-  }
-  //now look for matching wider bands
-  for(int i=freqtablelength-1;i>0;i--)
-  {
-    double f1chanwidth = freqtable[i].bandwidth/freqtable[i].numchannels;
-    double f1loweredge = freqtable[i].bandedgefreq;
-    if (freqtable[i].lowersideband)
-      f1loweredge -= freqtable[i].bandwidth;
-    for(int j=i-1;j>=0;j--)
-    {
-      double f2chanwidth = freqtable[j].bandwidth/freqtable[j].numchannels;
-      double f2loweredge = freqtable[j].bandedgefreq;
-      if (freqtable[j].lowersideband)
-        f2loweredge -= freqtable[j].bandwidth;
-      if((i != j) && (f1chanwidth == f2chanwidth) && (f1loweredge < f2loweredge) &&
-          (f1loweredge + freqtable[i].bandwidth > f2loweredge + freqtable[j].bandwidth))
-      {
-        freqtable[j].matchingwiderbandindex = i;
-        freqtable[j].matchingwiderbandoffset = int(((f2loweredge-f1loweredge)/freqtable[i].bandwidth)*freqtable[i].numchannels + 0.5);
-      }
-    }
   }
   freqread = true;
   return true;
@@ -2265,10 +2235,12 @@ bool Configuration::populateFrequencyDetails()
     configs[i].frequsedbysomebaseline = new bool[freqtablelength]();
     configs[i].equivfrequsedbysomebaseline = new bool[freqtablelength]();
     configs[i].freqoutputbysomebaseline = new bool[freqtablelength]();
+    configs[i].equivfreqoutputbysomebaseline = new bool[freqtablelength]();
     for(int j=0;j<freqtablelength;j++) {
       configs[i].frequsedbysomebaseline[j] = false;
       configs[i].equivfrequsedbysomebaseline[j] = false;
       configs[i].freqoutputbysomebaseline[j] = false;
+      configs[i].equivfreqoutputbysomebaseline[j] = false;
     }
     configs[i].frequsedbybaseline = new bool*[freqtablelength]();
     configs[i].equivfrequsedbybaseline = new bool*[freqtablelength]();
@@ -2294,11 +2266,11 @@ bool Configuration::populateFrequencyDetails()
     }
   }
 
-  //for each freq, check if an equivalent frequency is used, to ensure autocorrelations also get sent where required
+  //for each freq, check if an equivalent frequency is used or is output, to ensure autocorrelations also get sent where required
   double bwdiff, freqdiff;
   for(int i=0;i<numconfigs;i++) {
     for(int j=0;j<freqtablelength;j++) {
-      if(!configs[i].frequsedbysomebaseline[j]) {
+      if(!configs[i].frequsedbysomebaseline[j] || !configs[i].freqoutputbysomebaseline[j]) {
         for(int k=0;k<freqtablelength;k++) {
           bwdiff = freqtable[j].bandwidth - freqtable[k].bandwidth;
           freqdiff = freqtable[j].bandedgefreq - freqtable[k].bandedgefreq;
@@ -2314,6 +2286,8 @@ bool Configuration::populateFrequencyDetails()
           {
             if(configs[i].frequsedbysomebaseline[k])
               configs[i].equivfrequsedbysomebaseline[j] = true;
+            if(configs[i].freqoutputbysomebaseline[k])
+              configs[i].equivfreqoutputbysomebaseline[j] = true;
           }
         }
       }
@@ -2457,6 +2431,7 @@ bool Configuration::populateResultLengths()
           vector<int> inputfreqs = getSortedInputfreqsOfTargetfreq(c, i);
           // concatenate a complete output data region to the flat results array
           configs[c].coreresultbaselineoffset[i] = new int[numbaselines]();
+          std::fill_n(configs[c].coreresultbaselineoffset[i], numbaselines, -1);
           for(int j=0;j<numbaselines;j++)
           {
             if(!isFrequencyOutput(c,j,i))

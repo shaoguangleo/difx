@@ -956,11 +956,11 @@ int DifxVisNewUVData(DifxVis *dv, const struct CommandLineOptions *opts, const D
 	{
 		for(i = 0; i < 2; ++i)
 		{
-			if (polPair[i] == 'X')
+			if (polPair[i] == 'X' || polPair[i] == 'H')
 			{
 				polPair[i] = 'R';
 			}
-			else if (polPair[i] == 'Y')
+			else if (polPair[i] == 'Y' || polPair[i] == 'V')
 			{
 				polPair[i] = 'L';
 			}
@@ -1441,6 +1441,8 @@ static int ExcludeSource(const DifxVis *dv, const int *includeSourceIdList)
 
 const DifxInput *DifxInput2FitsUV(const DifxInput *D, struct fits_keywords *p_fits_keys, struct fitsPrivate *out, const struct CommandLineOptions *opts, int passNum)
 {
+	static int extver = 1;  /* sequence number of this table type in FITS file */
+
 	int i, l, v;
 	float visScale = 1.0;
 	char fileBase[200];
@@ -1656,7 +1658,7 @@ const DifxInput *DifxInput2FitsUV(const DifxInput *D, struct fits_keywords *p_fi
 	nColumn = NELEMENTS(columns);
 	nRowBytes = FitsBinTableSize(columns, nColumn);
 
-	fitsWriteBinTable(out, nColumn, columns, nRowBytes, "UV_DATA");
+	fitsWriteBinTable(out, nColumn, columns, nRowBytes, "UV_DATA", extver++);
 	fitsWriteInteger(out, "NMATRIX", 1, "");
 
 	/* get the job ref_date from the fits_keyword struct, convert it into
@@ -1836,6 +1838,7 @@ const DifxInput *DifxInput2FitsUV(const DifxInput *D, struct fits_keywords *p_fi
 #ifdef HAVE_FFTW
 				if(S)
 				{
+					flushSniffer(S);
 					deleteSniffer(S);
 					fftw_cleanup();
 					S = 0;
@@ -1876,6 +1879,7 @@ const DifxInput *DifxInput2FitsUV(const DifxInput *D, struct fits_keywords *p_fi
 #ifdef HAVE_FFTW
 	if(S)
 	{
+		flushSniffer(S);
 		deleteSniffer(S);
 		fftw_cleanup();
 		S = 0;
